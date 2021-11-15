@@ -15,45 +15,48 @@ import scipy.stats as stats
 import pandas as pd
 from PIL import Image, ImageFile
 
-from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
-from wilds.datasets.fmow_dataset import FMoWDataset
+from collections import Counter
+
+# from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
+# from wilds.datasets.fmow_dataset import FMoWDataset
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 DATASETS = [
     # Debug
-    "Debug28",
-    "Debug224",
+    # "Debug28",
+    # "Debug224",
     # Extra-small images (14x14)
-    "ColoredMNIST_IRM",
-    "ColoredMNIST_IRM_IID",
-    "ColoredMNIST_IRM_Blue",
+    # "ColoredMNIST_IRM",
+    # "ColoredMNIST_IRM_IID",
+    "ColoredMNIST_PLUS",
+    # "ColoredMNIST_IRM_Blue",
     # Small images
-    "ColoredMNIST",
-    "RotatedMNIST",
+    # "ColoredMNIST",
+    # "RotatedMNIST",
     # Big images
-    "VLCS",
-    "PACS",
-    "OfficeHome",
-    "TerraIncognita",
-    "DomainNet",
-    "SVIRO",
-    "NICOAnimal",
-    "NICOVehicle",
-    "NICOMixed",
+    # "VLCS",
+    # "PACS",
+    # "OfficeHome",
+    # "TerraIncognita",
+    # "DomainNet",
+    # "SVIRO",
+    # "NICOAnimal",
+    # "NICOVehicle",
+    # "NICOMixed",
     # WILDS datasets
-    "WILDSCamelyon",
-    "WILDSFMoW",
+    # "WILDSCamelyon",
+    # "WILDSFMoW",
     # ImageNet variants
-    "ImageNet_R",
-    "ImageNet_A",
-    "ImageNet_V2",
-    "ImageNetSketch",
+    # "ImageNet_R",
+    # "ImageNet_A",
+    # "ImageNet_V2",
+    # "ImageNetSketch",
     # CelebA splits
-    "CelebA_Blond",
+    # "CelebA_Blond",
     # CUB
-    "CUB_200_bill_shape",
-    "CUB_200_wing_color",
+    # "CUB_200_bill_shape",
+    # "CUB_200_wing_color",
 ]
 
 def get_dataset_class(dataset_name):
@@ -283,6 +286,7 @@ class ColoredMNIST_IRM(MultipleDomainDataset):
     
     
 class ColoredMNIST_IRM_IID(MultipleDomainDataset):
+    # This would not have any diversity or correlation shift
     N_STEPS = 5001
     CHECKPOINT_FREQ = 500
     ENVIRONMENTS = ['+50%', '+50%']
@@ -433,6 +437,179 @@ class ColoredMNIST_IRM_Blue(MultipleDomainDataset):
 
     def torch_xor_(self, a, b):
         return (a - b).abs()
+
+class ColoredMNIST_PLUS(MultipleDomainDataset):
+    N_STEPS = 5001
+    CHECKPOINT_FREQ = 500
+    ENVIRONMENTS = ['+90%', '+80%', '-90%']
+    INPUT_SHAPE = (3, 14, 14)
+
+    def __init__(self, root, test_envs, hparams):
+        super().__init__()
+        if root is None:
+            raise ValueError('Data directory not specified!')
+
+        original_dataset_tr = MNIST(root, train=True, download=True)
+
+        original_images = original_dataset_tr.train_data
+        original_labels = original_dataset_tr.train_labels
+
+        shuffle = torch.randperm(len(original_images))
+        original_images = original_images[shuffle]
+        original_labels = original_labels[shuffle]
+
+        self.datasets = []
+
+        color_prob = hparams['color_prob'] #\rho
+        label_flip = hparams['label_flip'] #0.25
+
+        # print(hparams)
+
+        self.color_prob = self.get_color_probs(color_prob)
+        self.label_prob = self.get_label_probs()
+        self.label_flip = label_flip
+
+        environments = (0,1,2) # those numbers would not be used
+        for i, env in enumerate(environments[:-1]):
+            # coloring one env
+            images = original_images[:50000][i::2]
+            labels = original_labels[:50000][i::2]
+            # modified coloring strategy
+            self.datasets.append(self.color_dataset(images, labels, env))
+        images = original_images[50000:]
+        labels = original_labels[50000:]
+
+        self.datasets.append(self.color_dataset(images, labels, environments[-1]))
+
+        self.input_shape = self.INPUT_SHAPE
+        self.num_classes = 2
+
+    def get_color_probs(self, color_prob):
+        main_color_prob = color_prob
+        minor_color_prob = (1-color_prob)/2
+
+        rgb_probs_env1 = [[minor_color_prob, minor_color_prob, main_color_prob], # P(C|Y=0,E=0)
+                            [main_color_prob, minor_color_prob, minor_color_prob]] # P(C|Y=1,E=0)
+        rgb_probs_env2 = [[minor_color_prob, minor_color_prob, main_color_prob],
+                            [minor_color_prob, main_color_prob, minor_color_prob]]
+        rgb_probs_env3 = [[0.4, 0.4, 0.2], [0.1, 0.1, 0.8]]
+
+        return [rgb_probs_env1, rgb_probs_env2, rgb_probs_env3]
+
+    def get_label_probs(self):
+        # [P(O=1|Y=0,E), P(O=1|Y=1,E)], O=1 means the sample observed
+        return [[0.1,0.9],[0.9,0.1],[0.5,0.5]]
+
+    def color_dataset(self, images, labels, env):
+        # Here, we color each image based on E and Y, the same as CMNIST
+        # Then, we downsample each domain to create strong spurious correlation E -- Y
+
+        # Subsample 2x for computational convenience
+        images = images.reshape((-1, 28, 28))[:, ::2, ::2]
+        # Assign a binary label based on the digit
+        labels = (labels < 5).float()
+
+        # Flip label with predefined prob label_flip
+        labels = self.torch_xor_(labels,
+                                 self.torch_bernoulli_(self.label_flip, len(labels)))
+
+        # Assign a color based on the label; flip the color with probability e
+
+        # sample colors based on predefined prob
+
+        # c1_idx = labels == 1
+        # c0_idx = labels == 0
+        c1_idx = (labels == 1).nonzero(as_tuple=True)[0]
+        c0_idx = (labels == 0).nonzero(as_tuple=True)[0]
+
+        n_c1 = c1_idx.shape[0]
+        n_c0 = c0_idx.shape[0]
+
+        # env is env idx
+        # colors = np.random.choice([0,1,2],torch.sum(c1_idx),
+        # replace=True,p=self.color_prob[env])
+        p0 = torch.tensor(self.color_prob[env][0])
+        p1 = torch.tensor(self.color_prob[env][1])
+
+        c0_color_idx = p0.multinomial(num_samples=n_c0,
+         replacement=True)
+        c1_color_idx = p1.multinomial(num_samples=n_c1,
+         replacement=True)
+
+        color_c0 = torch.tensor([0,1,2])[c0_color_idx]
+        color_c1 = torch.tensor([0,1,2])[c1_color_idx]
+
+        colors = torch.zeros(images.shape[0])
+        colors[c1_idx] = color_c1.float()
+        colors[c0_idx] = color_c0.float()
+
+        print("env %d"%env)
+        print('y=1')
+        print(Counter(color_c1.tolist()))
+        print('y=0')
+        print(Counter(color_c0.tolist()))
+
+        images = torch.stack([images, images, images], dim=1)
+        # Apply the color to the image by zeroing out the other color channel
+        # images[torch.tensor(range(len(images))), (
+        #     1 - colors).long(), :, :] *= 0
+
+        # remove the other channels' values
+        for i in range(3):
+            idxes_to_zero = torch.arange(images.shape[0])[colors != i]
+            images[idxes_to_zero,i,:,:] *= 0
+
+        # import matplotlib
+        # matplotlib.use('Agg')
+        # import matplotlib.pyplot as plt
+        # plt.hist(intensity, density=True)
+        # plt.savefig(f'tmp/env{environment}_blue{blue_mean}_hist.png')
+        # plt.clf()
+
+        # for i in range(5):
+        #     t = images[i].data.numpy().astype(np.uint8).transpose(1, 2, 0)
+        #     Image.fromarray(t).save(f'tmp/env{environment}_blue{blue_mean}_sample{i}.png')
+        
+        # t = torch.where(mask[i, 0] > 200, torch.zeros_like(images[i, 0]), torch.ones_like(images[i, 0]) * intensity[i])
+        # Image.fromarray(t.data.numpy()).save(f'tmp/env{environment}_bg{background}_sample{i}_gray.png')
+        # Image.fromarray(torch.cat([images[i], t.unsqueeze(0)], dim=0).data.numpy().transpose(1, 2, 0)).save(f'tmp/env{environment}_bg{background}_sample{i}.png')
+
+        # downsample based on labels
+        label_prob = self.label_prob[env]
+        if label_prob[0] == label_prob[1]:
+            pass
+        else:
+            if label_prob[0] > label_prob[1]:
+                ratio = label_prob[1]/label_prob[0]
+                n_downsample = int(n_c1*ratio)
+                # print(n_downsample)
+                c1_idx_downsampled = c1_idx[torch.randperm(n_c1)[:n_downsample]]
+                idx_downsampled = torch.cat([c0_idx,c1_idx_downsampled])
+            else:
+                ratio = label_prob[0]/label_prob[1]
+                n_downsample = int(n_c0*ratio)
+                # print(n_downsample)
+                c0_idx_downsampled = c0_idx[torch.randperm(n_c0)[:n_downsample]]
+                idx_downsampled = torch.cat([c1_idx,c0_idx_downsampled])
+            
+            images = images[idx_downsampled]
+            labels = labels[idx_downsampled]
+
+        x = images.float().div_(255.0)
+        y = labels.view(-1).long()
+
+        print(env)
+        print('ratio of positive label')
+        print(torch.sum(y)/y.shape[0])
+
+        return TensorDataset(x, y)
+
+    def torch_bernoulli_(self, p, size):
+        return (torch.rand(size) < p).float()
+
+    def torch_xor_(self, a, b):
+        return (a - b).abs()
+    
 
 
 class RotatedMNIST(MultipleEnvironmentMNIST):
@@ -744,23 +921,23 @@ class WILDSDataset(MultipleDomainDataset):
         return sorted(list(set(metadata_vals.view(-1).tolist())))
 
 
-class WILDSCamelyon(WILDSDataset):
-    ENVIRONMENTS = [ "hospital_0", "hospital_1", "hospital_2", "hospital_3",
-            "hospital_4"]
-    CHECKPOINT_FREQ = 1000
-    def __init__(self, root, test_envs, hparams):
-        dataset = Camelyon17Dataset(root_dir=f'{root}/WILDS')
-        super().__init__(
-            dataset, "hospital", test_envs, hparams['data_augmentation'], hparams)
+# class WILDSCamelyon(WILDSDataset):
+#     ENVIRONMENTS = [ "hospital_0", "hospital_1", "hospital_2", "hospital_3",
+#             "hospital_4"]
+#     CHECKPOINT_FREQ = 1000
+#     def __init__(self, root, test_envs, hparams):
+#         dataset = Camelyon17Dataset(root_dir=f'{root}/WILDS')
+#         super().__init__(
+#             dataset, "hospital", test_envs, hparams['data_augmentation'], hparams)
 
 
-class WILDSFMoW(WILDSDataset):
-    ENVIRONMENTS = [ "region_0", "region_1", "region_2", "region_3",
-            "region_4", "region_5"]
-    def __init__(self, root, test_envs, hparams):
-        dataset = FMoWDataset(root_dir=f'{root}/WILDS')
-        super().__init__(
-            dataset, "region", test_envs, hparams['data_augmentation'], hparams)
+# class WILDSFMoW(WILDSDataset):
+#     ENVIRONMENTS = [ "region_0", "region_1", "region_2", "region_3",
+#             "region_4", "region_5"]
+#     def __init__(self, root, test_envs, hparams):
+#         dataset = FMoWDataset(root_dir=f'{root}/WILDS')
+#         super().__init__(
+#             dataset, "region", test_envs, hparams['data_augmentation'], hparams)
         
 class ImageNetVariant(MultipleDomainDataset):
     def __init__(self, root, environments, test_envs, augment, hparams):

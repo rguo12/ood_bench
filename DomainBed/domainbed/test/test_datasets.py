@@ -1,6 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 
 """Unit tests."""
+import sys
+
+# for line in sys.path:
+#      print(line)
+# sys.path.append("../")
+# sys.path.append("../../")
+# sys.path.append("../../../")
 
 import argparse
 import itertools
@@ -47,3 +54,4 @@ class TestDatasets(unittest.TestCase):
             hparams).cuda()
         minibatches = helpers.make_minibatches(dataset, batch_size)
         algorithm.update(minibatches)
+

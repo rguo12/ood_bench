@@ -13,7 +13,9 @@ def _hparams(algorithm, dataset, random_seed):
     Global registry of hyperparams. Each entry is a (default, random) tuple.
     New algorithms / networks / etc. should add entries here.
     """
-    SMALL_IMAGES = ['Debug28', 'RotatedMNIST', 'ColoredMNIST', 'ColoredMNIST_RGB', 'ColoredMNIST_IRM', 'ColoredMNIST_IRM_IID', 'ColoredMNIST_IRM_Blue', 'ColoredMNIST_IRM_Div']
+    SMALL_IMAGES = ['Debug28', 'RotatedMNIST', 'ColoredMNIST', 
+    'ColoredMNIST_RGB', 'ColoredMNIST_IRM', 'ColoredMNIST_IRM_IID', 
+    'ColoredMNIST_IRM_Blue', 'ColoredMNIST_IRM_Div', 'ColoredMNIST_PLUS']
 
     hparams = {}
 
@@ -35,6 +37,13 @@ def _hparams(algorithm, dataset, random_seed):
     # TODO: nonlinear classifiers disabled
     _hparam('nonlinear_classifier', False,
             lambda r: bool(r.choice([False, False])))
+
+    # hparam for CMNIST_PLUS
+    if dataset == "ColoredMNIST_PLUS":
+        _hparam('color_prob', 0.9, lambda r: r.choice([0.9,0.85,0.8,0.75,0.7,0.65,0.6,0.55]))
+        _hparam('label_flip', 0.25, lambda r: 0.25)
+
+
 
     # Algorithm-specific hparam definitions. Each block of code below
     # corresponds to exactly one algorithm.

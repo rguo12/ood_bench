@@ -24,7 +24,8 @@ from domainbed.lib.fast_data_loader import InfiniteDataLoader, FastDataLoader
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Domain generalization')
     parser.add_argument('--data_dir', type=str)
-    parser.add_argument('--dataset', type=str, default="RotatedMNIST")
+    # parser.add_argument('--dataset', type=str, default="RotatedMNIST")
+    parser.add_argument('--dataset', type=str, default="ColoredMNIST_PLUS")
     parser.add_argument('--algorithm', type=str, default="ERM")
     parser.add_argument('--task', type=str, default="domain_generalization",
         choices=["domain_generalization", "domain_adaptation"])
@@ -41,7 +42,7 @@ if __name__ == "__main__":
         help='Number of steps. Default is dataset-dependent.')
     parser.add_argument('--checkpoint_freq', type=int, default=None,
         help='Checkpoint every N steps. Default is dataset-dependent.')
-    parser.add_argument('--test_envs', type=int, nargs='+', default=[0])
+    parser.add_argument('--test_envs', type=int, nargs='+', default=[2])
     parser.add_argument('--val_envs', type=int, nargs='*', default=[])   # setting this triggers a new model selection method
     parser.add_argument('--output_dir', type=str, default="train_output")
     parser.add_argument('--holdout_fraction', type=float, default=0.2)
@@ -209,6 +210,7 @@ if __name__ == "__main__":
             for i in range(len(uda_splits))]
 
     algorithm_class = algorithms.get_algorithm_class(args.algorithm)
+    # print(dataset.input_shape)
     algorithm = algorithm_class(dataset.input_shape, dataset.num_classes,
         len(dataset) - len(args.test_envs) - len(args.val_envs), hparams)
 
@@ -250,6 +252,7 @@ if __name__ == "__main__":
                 for x,_ in next(uda_minibatches_iterator)]
         else:
             uda_device = None
+        # print(minibatches_device[0][0].shape,minibatches_device[0][1].shape)
         step_vals = algorithm.update(minibatches_device, uda_device)
         checkpoint_vals['step_time'].append(time.time() - step_start_time)
 
